@@ -14,6 +14,10 @@ const paymentRoutes = require("./routes/paymentRoutes");
 const { handleStripeWebhook } = require("./controllers/paymentController");
 
 const app = express();
+// Add this above your app.listen() line
+app.get('/', (req, res) => {
+    res.status(200).send('News Site API is running...');
+});
 
 app.use(cors());
 app.post(
