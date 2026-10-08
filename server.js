@@ -42,6 +42,15 @@ app.use("/admin", express.static(path.join(__dirname, "../frontend/admin"), {
     index: "login.html"
 }));
 
+// Global error handler for JSON responses
+app.use((err, req, res, next) => {
+    console.error("Express Error:", err);
+    res.status(err.status || 500).json({ 
+        message: err.message || "Internal Server Error",
+        stack: process.env.NODE_ENV === 'production' ? null : err.stack
+    });
+});
+
 // Static frontend
 app.use(express.static(path.join(__dirname, "../frontend")));
 app.get(/.*/, (req, res) => {
