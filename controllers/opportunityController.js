@@ -74,7 +74,7 @@ const getOpportunityById = async (req, res) => {
 const createOpportunity = async (req, res) => {
   try {
     const data = { ...req.body };
-    if (req.file) data.banner = `/uploads/${req.file.filename}`;
+    if (req.file) data.banner = req.file.path;
     
     let slug = slugify(data.title);
     const existing = await Opportunity.findOne({ slug });
@@ -112,7 +112,7 @@ const updateOpportunity = async (req, res) => {
     if (!opp) return res.status(404).json({ message: 'Opportunity not found' });
 
     const data = { ...req.body };
-    if (req.file) data.banner = `/uploads/${req.file.filename}`;
+    if (req.file) data.banner = req.file.path;
     
     if (data.title && data.title !== opp.title) {
         data.slug = slugify(data.title);

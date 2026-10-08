@@ -1,13 +1,33 @@
 const multer = require('multer');
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
+const cloudinary = require('cloudinary').v2;
 const path = require('path');
 
-const storage = multer.diskStorage({
-  destination(req, file, cb) {
-    cb(null, path.join(__dirname, '..', 'uploads'));
+// Configure Cloudinary
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+const storage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: async (req, file) => {
+    let folder = 'newssite_uploads';
+    let resource_type = 'auto'; // let cloudinary auto-detect, but we can be explicit
+    
+    if (file.fieldname === 'video') {
+      resource_type = 'video';
+    } else {
+      resource_type = 'image';
+    }
+    
+    return {
+      folder: folder,
+      resource_type: resource_type,
+      public_id: `${file.fieldname}-${Date.now()}`,
+    };
   },
-  filename(req, file, cb) {
-    cb(null, `${file.fieldname}-${Date.now()}${path.extname(file.originalname)}`);
-  }
 });
 
 function checkFileType(file, cb) {

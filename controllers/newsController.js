@@ -135,8 +135,8 @@ const createNews = async (req, res) => {
 
     const news = await News.create({
       title, slug, category: normalizedCategory, region: normalizedCategory === 'Africa' ? normalizedRegion : undefined, content,
-      image: imageFile ? `/uploads/${imageFile.filename}` : '',
-      video: videoFile ? `/uploads/${videoFile.filename}` : '',
+      image: imageFile ? imageFile.path : '',
+      video: videoFile ? videoFile.path : '',
       tags: parseTags(tags),
       isBreaking: isBreaking === 'true',
       isFeatured: isFeatured === 'true',
@@ -184,8 +184,8 @@ const updateNews = async (req, res) => {
     if (seoDesc !== undefined) news.seoDesc = seoDesc;
     const imageFile = req.files?.image?.[0];
     const videoFile = req.files?.video?.[0];
-    if (imageFile) news.image = `/uploads/${imageFile.filename}`;
-    if (videoFile) news.video = `/uploads/${videoFile.filename}`;
+    if (imageFile) news.image = imageFile.path;
+    if (videoFile) news.video = videoFile.path;
 
     const updatedNews = await news.save();
     res.json(updatedNews);
