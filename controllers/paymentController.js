@@ -12,8 +12,10 @@ const getStripeClient = () => {
     return new Stripe(process.env.STRIPE_SECRET_KEY);
 };
 
-const getFrontendUrl = () => (process.env.FRONTEND_URL || `http://localhost:${process.env.PORT || 5000}`)
-    .replace(/\/+$/, '');
+const getFrontendUrl = () => {
+    let url = process.env.FRONTEND_URL || process.env.frontendUrl || 'https://theafricadiplomat.vercel.app';
+    return url.replace(/(\/index\.html)?\/*$/, '');
+};
 
 const markSessionPaid = async(session) => {
     const registrationId = session && session.metadata && session.metadata.registrationId;
@@ -97,14 +99,11 @@ const createCheckoutSession = async(req, res) => {
                 price_data: {
                     currency: 'usd',
                     unit_amount: amount,
-                    ...(isSubscription ?
-                        { recurring: { interval: 'month', interval_count: 3 } } :
-                        {}),
+                    ...(isSubscription ? { recurring: { interval: 'month', interval_count: 3 } } : {}),
                     product_data: {
                         name: opportunity.title,
                         description: isSubscription ?
-                            `${opportunity.type} subscription, billed every 3 months` :
-                            `${opportunity.type} registration`
+                            `${opportunity.type} subscription, billed every 3 months` : `${opportunity.type} registration`
                     }
                 },
                 quantity: 1
