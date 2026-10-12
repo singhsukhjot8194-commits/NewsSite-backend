@@ -86,7 +86,8 @@ const createCheckoutSession = async(req, res) => {
             phone: phone.trim(),
             opportunity: opportunity._id,
             status: 'pending',
-            paymentStatus: 'pending'
+            paymentStatus: 'pending',
+            paymentMethod: 'card'
         });
 
         const frontendUrl = getFrontendUrl();

@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const Registration = require('../models/Registration');
 const Opportunity = require('../models/Opportunity');
 const xlsx = require('xlsx');
@@ -6,12 +7,18 @@ const getRegistrationQuery = (params) => {
   const query = {};
   if (params.opportunityId) query.opportunity = params.opportunityId;
   if (params.status) query.status = params.status;
+  if (params.paymentStatus) query.paymentStatus = params.paymentStatus;
+  if (params.paymentMethod) query.paymentMethod = params.paymentMethod;
+  if (params.localOnly === 'true' || params.localOnly === true) {
+    query.paymentMethod = { $in: ['orange', 'lonestar'] };
+  }
   if (params.search) {
     const search = params.search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     query.$or = [
       { name: { $regex: search, $options: 'i' } },
       { email: { $regex: search, $options: 'i' } },
-      { phone: { $regex: search, $options: 'i' } }
+      { phone: { $regex: search, $options: 'i' } },
+      { transactionReference: { $regex: search, $options: 'i' } }
     ];
   }
   return query;
@@ -19,8 +26,20 @@ const getRegistrationQuery = (params) => {
 
 const createRegistration = async (req, res) => {
   try {
-    const { name, email, phone, opportunityId } = req.body;
-    const opp = await Opportunity.findById(opportunityId);
+    const { name, email, phone, opportunityId, transactionReference } = req.body;
+    let paymentMethod = req.body.paymentMethod || 'card';
+
+    if (!name || !email || !phone || !opportunityId) {
+      return res.status(400).json({ message: 'Name, email, phone, and opportunity are required' });
+    }
+
+    let opp;
+    if (mongoose.isValidObjectId(opportunityId)) {
+      opp = await Opportunity.findById(opportunityId);
+    }
+    if (!opp) {
+      opp = await Opportunity.findOne({ slug: opportunityId });
+    }
     if (!opp) return res.status(404).json({ message: 'Opportunity not found' });
 
     // Check seat availability
@@ -33,14 +52,48 @@ const createRegistration = async (req, res) => {
       return res.status(409).json({ message: 'Registration deadline has passed' });
     }
 
-    const registration = await Registration.create({
-      name, email, phone, opportunity: opportunityId
-    });
+    const isFree = opp.isFree || opp.pricingType === 'free';
+    if (isFree) {
+      paymentMethod = 'free';
+    }
 
-    opp.filledSeats += 1;
+    const paymentProof = req.file ? req.file.path : (req.body.paymentProof || null);
+
+    let accountHolder = null;
+    if (paymentMethod === 'orange') {
+      accountHolder = 'Myean D Torgean';
+    } else if (paymentMethod === 'lonestar') {
+      accountHolder = 'Myean D Torgbean';
+    }
+
+    const registrationData = {
+      name: name.trim(),
+      email: email.trim().toLowerCase(),
+      phone: phone.trim(),
+      opportunity: opp._id,
+      paymentMethod,
+      accountHolder,
+      transactionReference: transactionReference ? transactionReference.trim() : '',
+      paymentProof,
+      status: 'pending',
+      paymentStatus: isFree ? 'not_required' : (paymentMethod === 'orange' || paymentMethod === 'lonestar') ? 'pending' : 'pending',
+      amountPaid: isFree ? 0 : (opp.fees || 0)
+    };
+
+    const registration = await Registration.create(registrationData);
+
+    opp.filledSeats = (opp.filledSeats || 0) + 1;
     await opp.save();
 
-    res.status(201).json(registration);
+    await registration.populate('opportunity', 'title type fees pricingType');
+
+    res.status(201).json({
+      success: true,
+      message: (paymentMethod === 'orange' || paymentMethod === 'lonestar')
+        ? 'Transaction submitted for verification. We will send you confirmation shortly.'
+        : 'Registration created successfully.',
+      registration
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -166,6 +219,10 @@ const exportRegistrations = async (req, res) => {
       ClassOrOpportunity: reg.opportunity
         ? `${reg.opportunity.title} (${reg.opportunity.type})`
         : 'N/A',
+      PaymentMethod: reg.paymentMethod || 'card',
+      PaymentStatus: reg.paymentStatus || 'not_required',
+      PaymentProof: reg.paymentProof || '',
+      AccountHolder: reg.accountHolder || '',
       RegisteredAt: reg.registeredAt ? reg.registeredAt.toISOString() : '',
       Status: reg.status
     }));
@@ -206,11 +263,41 @@ const exportRegistrations = async (req, res) => {
   }
 };
 
+const verifyLocalPayment = async (req, res) => {
+  try {
+    const { action } = req.body; // 'approve' or 'reject'
+    const registration = await Registration.findById(req.params.id);
+    if (!registration) {
+      return res.status(404).json({ message: 'Registration not found' });
+    }
+
+    if (action === 'reject') {
+      registration.paymentStatus = 'failed';
+      registration.status = 'cancelled';
+    } else {
+      registration.paymentStatus = 'paid';
+      registration.status = 'confirmed';
+    }
+
+    await registration.save();
+    await registration.populate('opportunity', 'title type');
+
+    res.json({
+      success: true,
+      message: action === 'reject' ? 'Payment rejected' : 'Payment verified and registration confirmed',
+      registration
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   createRegistration,
   getRegistrations,
   deleteRegistration,
   updateRegistration,
   updateRegistrationStatus,
-  exportRegistrations
+  exportRegistrations,
+  verifyLocalPayment
 };

@@ -11,6 +11,14 @@ const registrationSchema = new mongoose.Schema({
     enum: ['not_required', 'pending', 'paid', 'failed'],
     default: 'not_required'
   },
+  paymentMethod: {
+    type: String,
+    enum: ['card', 'stripe', 'orange', 'lonestar', 'free'],
+    default: 'card'
+  },
+  paymentProof: { type: String },
+  accountHolder: { type: String },
+  transactionReference: { type: String },
   stripeCheckoutSessionId: { type: String, sparse: true, unique: true },
   amountPaid: { type: Number, min: 0 },
   registeredAt: { type: Date, default: Date.now }
