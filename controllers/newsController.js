@@ -11,7 +11,6 @@ const categoryNames = {
   'county news': 'County News',
   'county-news': 'County News',
   education: 'Education',
-  editorial: 'Editorial',
   entertainment: 'World',
   news: 'News',
   politics: 'Politics',
