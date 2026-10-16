@@ -57,13 +57,23 @@ const createRegistration = async (req, res) => {
       paymentMethod = 'free';
     }
 
-    const paymentProof = req.file ? req.file.path : (req.body.paymentProof || null);
+    let paymentProof = null;
+    if (req.file && req.file.path) {
+      paymentProof = req.file.path;
+    } else if (typeof req.body.paymentProof === 'string' && req.body.paymentProof.trim()) {
+      paymentProof = req.body.paymentProof.trim();
+    }
 
     let accountHolder = null;
     if (paymentMethod === 'orange') {
       accountHolder = 'Myean D Torgean';
     } else if (paymentMethod === 'lonestar') {
       accountHolder = 'Myean D Torgbean';
+    }
+
+    let finalAmount = isFree ? 0 : (opp.fees || 0);
+    if (req.body.amount && Number(req.body.amount) > 0) {
+      finalAmount = Number(req.body.amount);
     }
 
     const registrationData = {
@@ -77,7 +87,7 @@ const createRegistration = async (req, res) => {
       paymentProof,
       status: 'pending',
       paymentStatus: isFree ? 'not_required' : (paymentMethod === 'orange' || paymentMethod === 'lonestar') ? 'pending' : 'pending',
-      amountPaid: isFree ? 0 : (opp.fees || 0)
+      amountPaid: finalAmount
     };
 
     const registration = await Registration.create(registrationData);

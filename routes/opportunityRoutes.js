@@ -6,7 +6,12 @@ const {
   getOpportunityById,
   createOpportunity,
   updateOpportunity,
-  deleteOpportunity
+  deleteOpportunity,
+  getCurriculum,
+  addCurriculumTopic,
+  updateCurriculumTopic,
+  deleteCurriculumTopic,
+  accessClassroom
 } = require('../controllers/opportunityController');
 const { protect } = require('../middleware/auth');
 const upload = require('../middleware/upload');
@@ -16,6 +21,15 @@ router.route('/')
   .post(protect, upload.single('banner'), createOpportunity);
 
 router.get('/admin', protect, getAdminOpportunities);
+
+// Student Classroom Access Verification
+router.post('/:id/classroom/access', accessClassroom);
+
+// Admin Course Curriculum Management
+router.get('/:id/curriculum', protect, getCurriculum);
+router.post('/:id/curriculum/topic', protect, upload.array('images', 5), addCurriculumTopic);
+router.put('/:id/curriculum/topic/:topicId', protect, upload.array('images', 5), updateCurriculumTopic);
+router.delete('/:id/curriculum/topic/:topicId', protect, deleteCurriculumTopic);
 
 router.route('/:id')
   .get(getOpportunityById)

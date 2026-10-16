@@ -1,5 +1,17 @@
 const mongoose = require('mongoose');
 
+const topicSchema = new mongoose.Schema({
+    title: { type: String, required: true },
+    order: { type: Number, default: 1 },
+    summary: { type: String, default: '' },
+    content: { type: String, default: '' },
+    images: [{ type: String }],
+    resources: [{
+        title: { type: String },
+        url: { type: String }
+    }]
+}, { timestamps: true });
+
 const opportunitySchema = new mongoose.Schema({
     title: { type: String, required: true },
     slug: { type: String, required: true, unique: true },
@@ -23,6 +35,7 @@ const opportunitySchema = new mongoose.Schema({
     deadline: { type: Date },
     totalSeats: { type: Number },
     filledSeats: { type: Number, default: 0 },
+    curriculum: [topicSchema],
     status: {
         type: String,
         enum: ['draft', 'published', 'closed', 'upcoming', 'ongoing', 'completed'],

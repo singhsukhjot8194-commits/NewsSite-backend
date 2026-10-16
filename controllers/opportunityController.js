@@ -1,4 +1,5 @@
 const Opportunity = require('../models/Opportunity');
+const Registration = require('../models/Registration');
 const slugify = require('../utils/slugify');
 
 const getOpportunityList = async (req, res, includeUnpublished) => {
@@ -10,7 +11,11 @@ const getOpportunityList = async (req, res, includeUnpublished) => {
     const query = includeUnpublished
       ? {}
       : { $or: [{ isPublished: true }, { isPublished: { $exists: false } }] };
-    if (req.query.type) query.type = req.query.type;
+    if (req.query.type) {
+      query.type = req.query.type;
+    } else if (!includeUnpublished) {
+      query.type = { $ne: 'Donation' };
+    }
     if (req.query.status) query.status = req.query.status;
     if (req.query.isFeatured) query.isFeatured = req.query.isFeatured === 'true';
 
@@ -157,11 +162,224 @@ const deleteOpportunity = async (req, res) => {
   }
 };
 
+// Curriculum Management (Admin)
+const getCurriculum = async (req, res) => {
+  try {
+    const opp = await Opportunity.findById(req.params.id);
+    if (!opp) return res.status(404).json({ message: 'Course not found' });
+    const sorted = [...(opp.curriculum || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
+    res.json({ curriculum: sorted, courseTitle: opp.title, courseId: opp._id });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const addCurriculumTopic = async (req, res) => {
+  try {
+    const opp = await Opportunity.findById(req.params.id);
+    if (!opp) return res.status(404).json({ message: 'Course not found' });
+
+    const { title, summary, content, order } = req.body;
+    if (!title || !title.trim()) {
+      return res.status(400).json({ message: 'Topic title is required' });
+    }
+
+    const images = [];
+    if (req.files && Array.isArray(req.files)) {
+      req.files.forEach((f) => images.push(f.path));
+    } else if (req.file) {
+      images.push(req.file.path);
+    }
+
+    let parsedResources = [];
+    if (req.body.resources) {
+      try {
+        parsedResources = typeof req.body.resources === 'string'
+          ? JSON.parse(req.body.resources)
+          : req.body.resources;
+      } catch (e) {
+        parsedResources = [];
+      }
+    }
+
+    const newTopic = {
+      title: title.trim(),
+      summary: summary ? summary.trim() : '',
+      content: content ? content.trim() : '',
+      order: order ? Number(order) : (opp.curriculum.length + 1),
+      images,
+      resources: Array.isArray(parsedResources) ? parsedResources : []
+    };
+
+    opp.curriculum.push(newTopic);
+    await opp.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'Topic added successfully',
+      topic: opp.curriculum[opp.curriculum.length - 1],
+      curriculum: opp.curriculum
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const updateCurriculumTopic = async (req, res) => {
+  try {
+    const opp = await Opportunity.findById(req.params.id);
+    if (!opp) return res.status(404).json({ message: 'Course not found' });
+
+    const topic = opp.curriculum.id(req.params.topicId);
+    if (!topic) return res.status(404).json({ message: 'Topic not found' });
+
+    const { title, summary, content, order, existingImages } = req.body;
+    if (title) topic.title = title.trim();
+    if (summary !== undefined) topic.summary = summary.trim();
+    if (content !== undefined) topic.content = content.trim();
+    if (order !== undefined) topic.order = Number(order);
+
+    let images = [];
+    if (existingImages) {
+      try {
+        images = typeof existingImages === 'string' ? JSON.parse(existingImages) : existingImages;
+      } catch (e) {
+        images = topic.images || [];
+      }
+    } else {
+      images = topic.images || [];
+    }
+
+    if (req.files && Array.isArray(req.files)) {
+      req.files.forEach((f) => images.push(f.path));
+    } else if (req.file) {
+      images.push(req.file.path);
+    }
+    topic.images = images;
+
+    if (req.body.resources) {
+      try {
+        topic.resources = typeof req.body.resources === 'string'
+          ? JSON.parse(req.body.resources)
+          : req.body.resources;
+      } catch (e) {}
+    }
+
+    await opp.save();
+    res.json({ success: true, message: 'Topic updated successfully', topic });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const deleteCurriculumTopic = async (req, res) => {
+  try {
+    const opp = await Opportunity.findById(req.params.id);
+    if (!opp) return res.status(404).json({ message: 'Course not found' });
+
+    const topic = opp.curriculum.id(req.params.topicId);
+    if (!topic) return res.status(404).json({ message: 'Topic not found' });
+
+    topic.deleteOne();
+    await opp.save();
+
+    res.json({ success: true, message: 'Topic deleted successfully', curriculum: opp.curriculum });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// Classroom Access Verification (Student Portal)
+const accessClassroom = async (req, res) => {
+  try {
+    const { email, phone } = req.body;
+    if (!email || !email.trim()) {
+      return res.status(400).json({ message: 'Please enter your registered email address.' });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const isObjectId = /^[0-9a-fA-F]{24}$/.test(req.params.id);
+    const oppQuery = isObjectId ? { _id: req.params.id } : { slug: req.params.id };
+
+    const opp = await Opportunity.findOne(oppQuery);
+    if (!opp) return res.status(404).json({ message: 'Course not found.' });
+
+    // Look up registration for this course
+    const regQuery = {
+      opportunity: opp._id,
+      email: cleanEmail
+    };
+    if (phone && phone.trim()) {
+      regQuery.$or = [{ email: cleanEmail }, { phone: phone.trim() }];
+      delete regQuery.email;
+    }
+
+    const registration = await Registration.findOne(regQuery).sort({ createdAt: -1 });
+
+    if (!registration) {
+      return res.status(403).json({
+        allowed: false,
+        reason: 'not_enrolled',
+        message: 'No enrollment found for this email address. Please register for this course first.'
+      });
+    }
+
+    const isFree = opp.isFree || opp.pricingType === 'free';
+    const isPaid = registration.paymentStatus === 'paid';
+
+    if (!isFree && !isPaid) {
+      const isFailed = registration.paymentStatus === 'failed' || registration.status === 'cancelled';
+      if (isFailed) {
+        return res.status(403).json({
+          allowed: false,
+          reason: 'payment_failed',
+          message: 'Payment verification failed or registration was cancelled. Please contact support.'
+        });
+      }
+      return res.status(403).json({
+        allowed: false,
+        reason: 'pending_verification',
+        message: 'Your payment is currently pending verification. Once verified via Stripe or approved by our admin (for Orange/Lonestar Mobile Money), you will be granted access immediately.'
+      });
+    }
+
+    // Access Granted!
+    const sortedCurriculum = [...(opp.curriculum || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
+
+    res.json({
+      allowed: true,
+      student: {
+        id: registration._id,
+        name: registration.name,
+        email: registration.email,
+        paymentStatus: registration.paymentStatus,
+        paymentMethod: registration.paymentMethod
+      },
+      course: {
+        id: opp._id,
+        title: opp.title,
+        type: opp.type,
+        banner: opp.banner,
+        shortDesc: opp.shortDesc,
+        mode: opp.mode
+      },
+      curriculum: sortedCurriculum
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getOpportunities,
   getAdminOpportunities,
   getOpportunityById,
   createOpportunity,
   updateOpportunity,
-  deleteOpportunity
+  deleteOpportunity,
+  getCurriculum,
+  addCurriculumTopic,
+  updateCurriculumTopic,
+  deleteCurriculumTopic,
+  accessClassroom
 };

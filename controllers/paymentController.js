@@ -68,14 +68,19 @@ const createCheckoutSession = async(req, res) => {
             return res.status(400).json({ message: 'This service is free. Use the free registration form.' });
         }
 
-        const amount = Math.round(Number(opportunity.fees) * 100);
+        // Support dynamic custom amount for donations or check standard opportunity fee
+        let feeValue = opportunity.fees;
+        if (req.body.amount && Number(req.body.amount) > 0 && (opportunity.type === 'Donation' || opportunity.slug === 'support-our-journalism')) {
+            feeValue = Number(req.body.amount);
+        }
+
+        const amount = Math.round(Number(feeValue) * 100);
         if (!Number.isSafeInteger(amount) ||
             amount < 50 ||
-            amount > 99999999 ||
-            Math.round(Number(opportunity.fees) * 100) / 100 !== Number(opportunity.fees)
+            amount > 99999999
         ) {
             return res.status(400).json({
-                message: 'Set a valid USD price between 0.50 and 999,999.99 in the admin panel.'
+                message: 'Set a valid USD amount between 0.50 and 999,999.99.'
             });
         }
 
@@ -167,7 +172,8 @@ const getCheckoutStatus = async(req, res) => {
 };
 
 const handleStripeWebhook = async(req, res) => {
-    if (!process.env.STRIPE_SECRET_KEY || !process.env.STRIPE_WEBHOOK_SECRET) {
+    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || process.env.WEBHOOK_SIGNING_SECRET;
+    if (!process.env.STRIPE_SECRET_KEY || !webhookSecret) {
         return res.status(503).json({ message: 'Stripe keys and webhook signing secret must be configured.' });
     }
 
@@ -176,7 +182,7 @@ const handleStripeWebhook = async(req, res) => {
         event = getStripeClient().webhooks.constructEvent(
             req.body,
             req.headers['stripe-signature'],
-            process.env.STRIPE_WEBHOOK_SECRET
+            webhookSecret
         );
     } catch (error) {
         console.error('Stripe webhook signature verification failed:', error.message);
