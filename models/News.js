@@ -1,20 +1,20 @@
-const mongoose = require('mongoose');
+const mongoose = require("mongoose");
 
 const newsSchema = new mongoose.Schema({
-  title: { type: String, required: true },
-  slug: { type: String, required: true, unique: true },
-  category: { type: String, required: true },
-  region: { type: String, enum: ['north-africa', 'south-africa', 'east-africa', 'west-africa'] },
-  content: { type: String, required: true },
-  image: { type: String },
-  video: { type: String },
-  tags: [{ type: String }],
-  isBreaking: { type: Boolean, default: false },
-  isFeatured: { type: Boolean, default: false },
-  status: { type: String, enum: ['draft', 'published'], default: 'draft' },
-  seoTitle: { type: String },
-  seoDesc: { type: String },
-  views: { type: Number, default: 0 }
+    title: { type: String, required: true, trim: true, maxlength: 200 },
+    slug: { type: String, unique: true, trim: true, maxlength: 220 },
+    category: { type: String, required: true, trim: true, maxlength: 100 },
+    region: { type: String, trim: true, lowercase: true, maxlength: 50 },
+    content: { type: String, default: "" },
+    image: { type: String, trim: true },
+    video: { type: String, trim: true },
+    tags: [{ type: String, trim: true, maxlength: 50 }],
+    isBreaking: { type: Boolean, default: false },
+    isFeatured: { type: Boolean, default: false },
+    status: { type: String, enum: ["draft", "published"], default: "draft" },
+    seoTitle: { type: String, trim: true, maxlength: 200 },
+    seoDesc: { type: String, trim: true, maxlength: 300 },
+    views: { type: Number, default: 0, min: 0 }
 }, { timestamps: true });
 
-module.exports = mongoose.model('News', newsSchema);
+module.exports = mongoose.model("News", newsSchema);

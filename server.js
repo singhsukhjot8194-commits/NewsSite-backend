@@ -2,6 +2,8 @@ const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
 const path = require("path");
+const helmet = require("helmet");
+const rateLimit = require("express-rate-limit");
 require("dotenv").config();
 require("./utils/jwtSecret")();
 
@@ -14,22 +16,96 @@ const paymentRoutes = require("./routes/paymentRoutes");
 const { handleStripeWebhook } = require("./controllers/paymentController");
 
 const app = express();
-// Add this above your app.listen() line
-app.get('/', (req, res) => {
-    res.status(200).send('News Site API is running...');
+
+// Trust proxy (behind Render/NGINX)
+app.set("trust proxy", 1);
+
+// Security headers via helmet
+app.use(helmet());
+app.use(
+    helmet.contentSecurityPolicy({
+        directives: {
+            defaultSrc: ["'self'"],
+            baseUri: ["'self'"],
+            blockAllMixedContent: [],
+            fontSrc: ["'self'", "https:", "data:"],
+            frameAncestors: ["'self'"],
+            imgSrc: ["'self'", "data:", "https:", "blob:"],
+            objectSrc: ["'none'"],
+            scriptSrc: [
+                "'self'",
+                "https://cdnjs.cloudflare.com",
+                "https://kit.fontawesome.com",
+                "'unsafe-inline'",
+            ],
+            scriptSrcAttr: ["'none'"],
+            styleSrc: ["'self'", "https:", "'unsafe-inline'"],
+            upgradeInsecureRequests: [],
+        },
+    })
+);
+app.use(helmet.referrerPolicy({ policy: "strict-origin-when-cross-origin" }));
+
+// CORS restricted to known origins
+const allowedOrigins = (process.env.CORS_ORIGINS || "http://localhost:5000,http://127.0.0.1:5500,https://theafricadiplomat.vercel.app")
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean);
+app.use(
+    cors({
+        origin: (origin, cb) => {
+            if (!origin) return cb(null, true);
+            if (allowedOrigins.includes(origin)) return cb(null, true);
+            return cb(new Error("Not allowed by CORS"), false);
+        },
+        credentials: true,
+        methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allowedHeaders: ["Content-Type", "Authorization"],
+    })
+);
+
+// Body parsing limits
+app.use(express.json({ limit: "100kb" }));
+app.use(express.urlencoded({ extended: true, limit: "100kb" }));
+
+// NoSQL injection protection is handled at the controller layer via field whitelists
+// and escapeRegExp for query building (Express 5 makes req.query read-only).
+
+// General API rate limiter
+const apiLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 300,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { message: "Too many requests, please try again later." },
+});
+app.use("/api", apiLimiter);
+
+// Strict auth rate limiter (applied inside route files too)
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { message: "Too many login attempts, please try again later." },
 });
 
-app.use(cors());
+// Health
+app.get("/", (req, res) => {
+    res.status(200).send("News Site API is running...");
+});
+
+// Stripe webhook (raw body, before json parser)
 app.post(
     "/api/payments/webhook",
     express.raw({ type: "application/json" }),
     handleStripeWebhook
 );
-app.use(express.json());
+
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // Routes
-app.use("/api/admin", adminRoutes);
+app.use("/api/admin", authLimiter, adminRoutes);
 app.use("/api/news", newsRoutes);
 app.use("/api/opportunities", opportunityRoutes);
 app.use("/api/registrations", registrationRoutes);
@@ -42,19 +118,18 @@ app.use("/admin", express.static(path.join(__dirname, "../frontend/admin"), {
     index: "login.html"
 }));
 
-// Global error handler for JSON responses
-app.use((err, req, res, next) => {
-    console.error("Express Error:", err);
-    res.status(err.status || 500).json({
-        message: err.message || "Internal Server Error",
-        stack: process.env.NODE_ENV === 'production' ? null : err.stack
-    });
-});
-
 // Static frontend
-app.use(express.static(path.join(__dirname, "../frontend")));
+app.use(express.static(path.join(__dirname, "../frontend"), { extensions: ["html"] }));
 app.get(/.*/, (req, res) => {
     res.sendFile(path.join(__dirname, "../frontend/index.html"));
+});
+
+// Generic error handler (no internal leakage)
+app.use((err, req, res, next) => {
+    console.error("Express Error:", err.message);
+    res.status(err.status || 500).json({
+        message: err.status ? err.message : "Internal Server Error",
+    });
 });
 
 const PORT = process.env.PORT || 5000;

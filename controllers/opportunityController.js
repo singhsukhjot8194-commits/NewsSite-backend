@@ -1,30 +1,86 @@
-const Opportunity = require('../models/Opportunity');
-const Registration = require('../models/Registration');
-const slugify = require('../utils/slugify');
+const Opportunity = require("../models/Opportunity");
+const Registration = require("../models/Registration");
+const slugify = require("../utils/slugify");
+
+const allowedOppFields = [
+  "title",
+  "shortDesc",
+  "fullDetails",
+  "type",
+  "date",
+  "time",
+  "duration",
+  "mode",
+  "location",
+  "eligibility",
+  "pricingType",
+  "isFree",
+  "fees",
+  "deadline",
+  "totalSeats",
+  "isPublished",
+  "isFeatured",
+  "status"
+];
+
+const pickAllowed = (body, fields) => {
+  const data = {};
+  fields.forEach((key) => {
+    if (Object.prototype.hasOwnProperty.call(body, key)) {
+      let value = body[key];
+      if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+        return;
+      }
+      data[key] = value;
+    }
+  });
+  return data;
+};
+
+const sanitizeString = (value) => {
+  if (typeof value !== "string") return value;
+  return value.trim();
+};
+
+const validTypes = ["Class", "Opportunity", "Workshop", "Webinar", "Internship", "Course", "Event", "Subscription", "Donation"];
+const validModes = ["Online", "Offline", "Hybrid"];
+const validStatuses = ["draft", "published", "closed", "upcoming", "ongoing", "completed"];
+const validPricingTypes = ["free", "subscription", "special"];
 
 const getOpportunityList = async (req, res, includeUnpublished) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
+    const page = Math.max(parseInt(req.query.page) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 10, 1), 100);
     const skip = (page - 1) * limit;
 
     const query = includeUnpublished
       ? {}
       : { $or: [{ isPublished: true }, { isPublished: { $exists: false } }] };
+
     if (req.query.type) {
-      query.type = req.query.type;
+      if (!validTypes.includes(String(req.query.type))) {
+        return res.status(400).json({ message: "Invalid opportunity type" });
+      }
+      query.type = String(req.query.type);
     } else if (!includeUnpublished) {
-      query.type = { $ne: 'Donation' };
+      query.type = { $ne: "Donation" };
     }
-    if (req.query.status) query.status = req.query.status;
-    if (req.query.isFeatured) query.isFeatured = req.query.isFeatured === 'true';
+    if (req.query.status) {
+      if (!validStatuses.includes(String(req.query.status))) {
+        return res.status(400).json({ message: "Invalid status" });
+      }
+      query.status = String(req.query.status);
+    }
+    if (req.query.isFeatured) {
+      query.isFeatured = String(req.query.isFeatured) === "true";
+    }
 
     const opps = await Opportunity.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit);
     const total = await Opportunity.countDocuments(query);
 
     res.json({ opportunities: opps, page, pages: Math.ceil(total / limit), total });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: "Failed to load opportunities" });
   }
 };
 
@@ -32,7 +88,7 @@ const getOpportunities = (req, res) => getOpportunityList(req, res, false);
 const getAdminOpportunities = (req, res) => getOpportunityList(req, res, true);
 
 const validatePricing = (data, res) => {
-  if (data.isFree === true) {
+  if (data.isFree === true || data.isFree === "true") {
     data.fees = 0;
     return true;
   }
@@ -44,7 +100,7 @@ const validatePricing = (data, res) => {
     || Math.round(fees * 100) / 100 !== fees
   ) {
     res.status(400).json({
-      message: 'Paid service prices must be USD 0.50–999,999.99 with no more than two decimal places.'
+      message: "Paid service prices must be USD 0.50–999,999.99 with no more than two decimal places."
     });
     return false;
   }
@@ -53,7 +109,7 @@ const validatePricing = (data, res) => {
 };
 
 const normalizePricingType = (value) => {
-  if (['free', 'subscription', 'special'].includes(value)) return value;
+  if (validPricingTypes.includes(value)) return value;
   return null;
 };
 
@@ -70,118 +126,156 @@ const getOpportunityById = async (req, res) => {
     }
     const opp = await Opportunity.findOne(query);
     if (opp) res.json(opp);
-    else res.status(404).json({ message: 'Opportunity not found' });
+    else res.status(404).json({ message: "Opportunity not found" });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: "Failed to load opportunity" });
   }
 };
 
 const createOpportunity = async (req, res) => {
   try {
-    const data = { ...req.body };
+    const data = pickAllowed(req.body, allowedOppFields);
     if (req.file) data.banner = req.file.path;
-    
+
+    if (!data.title || !String(data.title).trim()) {
+      return res.status(400).json({ message: "Title is required" });
+    }
+    data.title = String(data.title).trim();
+
     let slug = slugify(data.title);
     const existing = await Opportunity.findOne({ slug });
     if (existing) slug = `${slug}-${Date.now()}`;
     data.slug = slug;
 
-    const normalizedPricingType = normalizePricingType(data.pricingType);
+    const normalizedPricingType = normalizePricingType(
+      data.pricingType !== undefined ? data.pricingType : ""
+    );
     if (data.pricingType !== undefined && !normalizedPricingType) {
-      return res.status(400).json({ message: 'Choose Free, Subscription, or Special pricing.' });
+      return res.status(400).json({ message: "Choose Free, Subscription, or Special pricing." });
     }
     const pricingType = normalizedPricingType
-      || (data.isFree === 'true' || data.isFree === true ? 'free' : 'special');
+      || (data.isFree === "true" || data.isFree === true ? "free" : "special");
     data.pricingType = pricingType;
-    data.isFree = pricingType === 'free';
+    data.isFree = pricingType === "free";
+
     if (!validatePricing(data, res)) return;
+
     if (data.isPublished !== undefined) {
-      data.isPublished = data.isPublished === 'true' || data.isPublished === true;
+      data.isPublished = data.isPublished === "true" || data.isPublished === true;
     } else {
       data.isPublished = false;
     }
 
-    if (data.isFeatured === 'true' || data.isFeatured === true) data.isFeatured = true;
+    if (data.isFeatured === "true" || data.isFeatured === true) data.isFeatured = true;
     else data.isFeatured = false;
+
+    if (data.type && !validTypes.includes(data.type)) {
+      return res.status(400).json({ message: "Invalid opportunity type" });
+    }
+    if (data.mode && !validModes.includes(data.mode)) {
+      return res.status(400).json({ message: "Invalid mode" });
+    }
+    if (data.status && !validStatuses.includes(data.status)) {
+      return res.status(400).json({ message: "Invalid status" });
+    }
+
+    if (data.shortDesc) data.shortDesc = sanitizeString(data.shortDesc);
+    if (data.fullDetails) data.fullDetails = sanitizeString(data.fullDetails);
+    if (data.eligibility) data.eligibility = sanitizeString(data.eligibility);
+    if (data.location) data.location = sanitizeString(data.location);
 
     const opp = await Opportunity.create(data);
     res.status(201).json(opp);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: "Failed to create opportunity" });
   }
 };
 
 const updateOpportunity = async (req, res) => {
   try {
     const opp = await Opportunity.findById(req.params.id);
-    if (!opp) return res.status(404).json({ message: 'Opportunity not found' });
+    if (!opp) return res.status(404).json({ message: "Opportunity not found" });
 
-    const data = { ...req.body };
+    const data = pickAllowed(req.body, allowedOppFields);
     if (req.file) data.banner = req.file.path;
-    
-    if (data.title && data.title !== opp.title) {
-        data.slug = slugify(data.title);
+
+    if (data.title && String(data.title).trim() !== opp.title) {
+      data.title = String(data.title).trim();
+      data.slug = slugify(data.title);
     }
-    
+
     if (data.pricingType !== undefined) {
       const pricingType = normalizePricingType(data.pricingType);
       if (!pricingType) {
-        return res.status(400).json({ message: 'Choose Free, Subscription, or Special pricing.' });
+        return res.status(400).json({ message: "Choose Free, Subscription, or Special pricing." });
       }
       data.pricingType = pricingType;
-      data.isFree = pricingType === 'free';
+      data.isFree = pricingType === "free";
     } else if (data.isFree !== undefined) {
-      data.isFree = data.isFree === 'true' || data.isFree === true;
-      data.pricingType = data.isFree ? 'free' : (opp.pricingType || 'special');
+      data.isFree = data.isFree === "true" || data.isFree === true;
+      data.pricingType = data.isFree ? "free" : (opp.pricingType || "special");
     }
-    if (data.isFeatured !== undefined) data.isFeatured = data.isFeatured === 'true' || data.isFeatured === true;
+    if (data.isFeatured !== undefined) data.isFeatured = data.isFeatured === "true" || data.isFeatured === true;
     if (data.isPublished !== undefined) {
-      data.isPublished = data.isPublished === 'true' || data.isPublished === true;
+      data.isPublished = data.isPublished === "true" || data.isPublished === true;
     }
-    if (data.pricingType === 'free' || data.isFree === true) data.fees = 0;
+    if (data.pricingType === "free" || data.isFree === true) data.fees = 0;
     else if (data.pricingType !== undefined || data.isFree === false || data.fees !== undefined) {
       const pricing = { ...opp.toObject(), ...data };
       if (!validatePricing(pricing, res)) return;
       data.fees = pricing.fees;
     }
 
+    if (data.type && !validTypes.includes(data.type)) {
+      return res.status(400).json({ message: "Invalid opportunity type" });
+    }
+    if (data.mode && !validModes.includes(data.mode)) {
+      return res.status(400).json({ message: "Invalid mode" });
+    }
+    if (data.status && !validStatuses.includes(data.status)) {
+      return res.status(400).json({ message: "Invalid status" });
+    }
+    if (data.shortDesc) data.shortDesc = sanitizeString(data.shortDesc);
+    if (data.fullDetails) data.fullDetails = sanitizeString(data.fullDetails);
+    if (data.eligibility) data.eligibility = sanitizeString(data.eligibility);
+    if (data.location) data.location = sanitizeString(data.location);
+
     const updatedOpp = await Opportunity.findByIdAndUpdate(req.params.id, data, { new: true });
     res.json(updatedOpp);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: "Failed to update opportunity" });
   }
 };
 
 const deleteOpportunity = async (req, res) => {
   try {
     const opp = await Opportunity.findByIdAndDelete(req.params.id);
-    if (opp) res.json({ message: 'Opportunity removed' });
-    else res.status(404).json({ message: 'Opportunity not found' });
+    if (opp) res.json({ message: "Opportunity removed" });
+    else res.status(404).json({ message: "Opportunity not found" });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: "Failed to delete opportunity" });
   }
 };
 
-// Curriculum Management (Admin)
 const getCurriculum = async (req, res) => {
   try {
     const opp = await Opportunity.findById(req.params.id);
-    if (!opp) return res.status(404).json({ message: 'Course not found' });
+    if (!opp) return res.status(404).json({ message: "Course not found" });
     const sorted = [...(opp.curriculum || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
     res.json({ curriculum: sorted, courseTitle: opp.title, courseId: opp._id });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: "Failed to load curriculum" });
   }
 };
 
 const addCurriculumTopic = async (req, res) => {
   try {
     const opp = await Opportunity.findById(req.params.id);
-    if (!opp) return res.status(404).json({ message: 'Course not found' });
+    if (!opp) return res.status(404).json({ message: "Course not found" });
 
     const { title, summary, content, order } = req.body;
     if (!title || !title.trim()) {
-      return res.status(400).json({ message: 'Topic title is required' });
+      return res.status(400).json({ message: "Topic title is required" });
     }
 
     const images = [];
@@ -194,7 +288,7 @@ const addCurriculumTopic = async (req, res) => {
     let parsedResources = [];
     if (req.body.resources) {
       try {
-        parsedResources = typeof req.body.resources === 'string'
+        parsedResources = typeof req.body.resources === "string"
           ? JSON.parse(req.body.resources)
           : req.body.resources;
       } catch (e) {
@@ -204,8 +298,8 @@ const addCurriculumTopic = async (req, res) => {
 
     const newTopic = {
       title: title.trim(),
-      summary: summary ? summary.trim() : '',
-      content: content ? content.trim() : '',
+      summary: summary ? summary.trim() : "",
+      content: content ? content.trim() : "",
       order: order ? Number(order) : (opp.curriculum.length + 1),
       images,
       resources: Array.isArray(parsedResources) ? parsedResources : []
@@ -216,22 +310,22 @@ const addCurriculumTopic = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: 'Topic added successfully',
+      message: "Topic added successfully",
       topic: opp.curriculum[opp.curriculum.length - 1],
       curriculum: opp.curriculum
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: "Failed to add topic" });
   }
 };
 
 const updateCurriculumTopic = async (req, res) => {
   try {
     const opp = await Opportunity.findById(req.params.id);
-    if (!opp) return res.status(404).json({ message: 'Course not found' });
+    if (!opp) return res.status(404).json({ message: "Course not found" });
 
     const topic = opp.curriculum.id(req.params.topicId);
-    if (!topic) return res.status(404).json({ message: 'Topic not found' });
+    if (!topic) return res.status(404).json({ message: "Topic not found" });
 
     const { title, summary, content, order, existingImages } = req.body;
     if (title) topic.title = title.trim();
@@ -242,7 +336,7 @@ const updateCurriculumTopic = async (req, res) => {
     let images = [];
     if (existingImages) {
       try {
-        images = typeof existingImages === 'string' ? JSON.parse(existingImages) : existingImages;
+        images = typeof existingImages === "string" ? JSON.parse(existingImages) : existingImages;
       } catch (e) {
         images = topic.images || [];
       }
@@ -259,58 +353,56 @@ const updateCurriculumTopic = async (req, res) => {
 
     if (req.body.resources) {
       try {
-        topic.resources = typeof req.body.resources === 'string'
+        topic.resources = typeof req.body.resources === "string"
           ? JSON.parse(req.body.resources)
           : req.body.resources;
       } catch (e) {}
     }
 
     await opp.save();
-    res.json({ success: true, message: 'Topic updated successfully', topic });
+    res.json({ success: true, message: "Topic updated successfully", topic });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: "Failed to update topic" });
   }
 };
 
 const deleteCurriculumTopic = async (req, res) => {
   try {
     const opp = await Opportunity.findById(req.params.id);
-    if (!opp) return res.status(404).json({ message: 'Course not found' });
+    if (!opp) return res.status(404).json({ message: "Course not found" });
 
     const topic = opp.curriculum.id(req.params.topicId);
-    if (!topic) return res.status(404).json({ message: 'Topic not found' });
+    if (!topic) return res.status(404).json({ message: "Topic not found" });
 
     topic.deleteOne();
     await opp.save();
 
-    res.json({ success: true, message: 'Topic deleted successfully', curriculum: opp.curriculum });
+    res.json({ success: true, message: "Topic deleted successfully", curriculum: opp.curriculum });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: "Failed to delete topic" });
   }
 };
 
-// Classroom Access Verification (Student Portal)
 const accessClassroom = async (req, res) => {
   try {
     const { email, phone } = req.body;
     if (!email || !email.trim()) {
-      return res.status(400).json({ message: 'Please enter your registered email address.' });
+      return res.status(400).json({ message: "Please enter your registered email address." });
     }
 
-    const cleanEmail = email.trim().toLowerCase();
+    const cleanEmail = String(email).trim().toLowerCase();
     const isObjectId = /^[0-9a-fA-F]{24}$/.test(req.params.id);
     const oppQuery = isObjectId ? { _id: req.params.id } : { slug: req.params.id };
 
     const opp = await Opportunity.findOne(oppQuery);
-    if (!opp) return res.status(404).json({ message: 'Course not found.' });
+    if (!opp) return res.status(404).json({ message: "Course not found." });
 
-    // Look up registration for this course
     const regQuery = {
       opportunity: opp._id,
       email: cleanEmail
     };
     if (phone && phone.trim()) {
-      regQuery.$or = [{ email: cleanEmail }, { phone: phone.trim() }];
+      regQuery.$or = [{ email: cleanEmail }, { phone: String(phone).trim() }];
       delete regQuery.email;
     }
 
@@ -319,31 +411,30 @@ const accessClassroom = async (req, res) => {
     if (!registration) {
       return res.status(403).json({
         allowed: false,
-        reason: 'not_enrolled',
-        message: 'No enrollment found for this email address. Please register for this course first.'
+        reason: "not_enrolled",
+        message: "No enrollment found for this email address. Please register for this course first."
       });
     }
 
-    const isFree = opp.isFree || opp.pricingType === 'free';
-    const isPaid = registration.paymentStatus === 'paid';
+    const isFree = opp.isFree || opp.pricingType === "free";
+    const isPaid = registration.paymentStatus === "paid";
 
     if (!isFree && !isPaid) {
-      const isFailed = registration.paymentStatus === 'failed' || registration.status === 'cancelled';
+      const isFailed = registration.paymentStatus === "failed" || registration.status === "cancelled";
       if (isFailed) {
         return res.status(403).json({
           allowed: false,
-          reason: 'payment_failed',
-          message: 'Payment verification failed or registration was cancelled. Please contact support.'
+          reason: "payment_failed",
+          message: "Payment verification failed or registration was cancelled. Please contact support."
         });
       }
       return res.status(403).json({
         allowed: false,
-        reason: 'pending_verification',
-        message: 'Your payment is currently pending verification. Once verified via Stripe or approved by our admin (for Orange/Lonestar Mobile Money), you will be granted access immediately.'
+        reason: "pending_verification",
+        message: "Your payment is currently pending verification. Once verified via Stripe or approved by our admin (for Orange/Lonestar Mobile Money), you will be granted access immediately."
       });
     }
 
-    // Access Granted!
     const sortedCurriculum = [...(opp.curriculum || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
 
     res.json({
@@ -366,7 +457,7 @@ const accessClassroom = async (req, res) => {
       curriculum: sortedCurriculum
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: "Failed to verify classroom access" });
   }
 };
 

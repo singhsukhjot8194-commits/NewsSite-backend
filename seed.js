@@ -111,8 +111,8 @@ const seedOpportunities = async () => {
       banner: 'https://images.unsplash.com/photo-1555949963-ff9fe0c870eb?auto=format&fit=crop&q=80&w=1000',
     },
     {
-      title: 'Support Our Journalism',
-      shortDesc: 'Make a one-time donation to support independent journalism in Africa.',
+      title: 'Donation',
+      shortDesc: 'Make a contribution to support independent journalism in Africa.',
       fullDetails: 'Your contribution helps us keep our reporting independent and accessible to everyone.',
       type: 'Donation',
       mode: 'Online',
@@ -155,8 +155,8 @@ const seedDatabase = async () => {
     await Opportunity.deleteMany({});
 
     await Admin.create({
-      email: 'admin@example.com',
-      password: 'password123',
+      email: 'admin@theafricadiplomat.local',
+      password: 'TAD@dm1n!2026Secure',
     });
 
     await seedNews();
