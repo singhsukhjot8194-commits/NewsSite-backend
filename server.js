@@ -20,6 +20,13 @@ const app = express();
 // Trust proxy (behind Render/NGINX)
 app.set("trust proxy", 1);
 
+// Stripe webhook (raw body, MUST be placed before express.json body parser)
+app.post(
+    "/api/payments/webhook",
+    express.raw({ type: "application/json" }),
+    handleStripeWebhook
+);
+
 // Security headers via helmet
 app.use(helmet());
 app.use(
@@ -94,13 +101,6 @@ const authLimiter = rateLimit({
 app.get("/", (req, res) => {
     res.status(200).send("News Site API is running...");
 });
-
-// Stripe webhook (raw body, before json parser)
-app.post(
-    "/api/payments/webhook",
-    express.raw({ type: "application/json" }),
-    handleStripeWebhook
-);
 
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
