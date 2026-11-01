@@ -52,6 +52,10 @@ app.use(
     })
 );
 app.use(helmet.referrerPolicy({ policy: "strict-origin-when-cross-origin" }));
+app.use((req, res, next) => {
+    res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    next();
+});
 
 // CORS restricted to known origins
 const allowedOrigins = (process.env.CORS_ORIGINS || "http://localhost:5000,http://127.0.0.1:5500,https://theafricadiplomat.vercel.app")
